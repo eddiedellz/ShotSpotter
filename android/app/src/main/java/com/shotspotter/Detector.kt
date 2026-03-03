@@ -84,10 +84,10 @@ class Detector(
                 maxX = max(maxX, x)
                 maxY = max(maxY, y)
 
-                enqueueIfValid(x - 1, y, width, height, active, visited, queue) { queue[tail++] = it }
-                enqueueIfValid(x + 1, y, width, height, active, visited, queue) { queue[tail++] = it }
-                enqueueIfValid(x, y - 1, width, height, active, visited, queue) { queue[tail++] = it }
-                enqueueIfValid(x, y + 1, width, height, active, visited, queue) { queue[tail++] = it }
+                enqueueIfValid(x - 1, y, width, height, active, visited) { idx -> queue[tail++] = idx }
+                enqueueIfValid(x + 1, y, width, height, active, visited) { idx -> queue[tail++] = idx }
+                enqueueIfValid(x, y - 1, width, height, active, visited) { idx -> queue[tail++] = idx }
+                enqueueIfValid(x, y + 1, width, height, active, visited) { idx -> queue[tail++] = idx }
             }
 
             if (area !in minArea..maxArea) continue
