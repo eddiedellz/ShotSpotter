@@ -4,3 +4,6 @@ build/
 local.properties
 .idea/
 *.iml
+
+# Do not commit binary Gradle wrapper jar
+/gradle/wrapper/gradle-wrapper.jar
