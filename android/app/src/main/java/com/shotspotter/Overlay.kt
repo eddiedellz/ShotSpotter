@@ -170,6 +170,7 @@ fun ShotOverlay(
 fun TargetRoiOverlay(
     roi: RoiNorm,
     onRoiChange: (RoiNorm) -> Unit,
+    dragEnabled: Boolean,
     showOverlay: Boolean,
     modifier: Modifier = Modifier
 ) {
@@ -181,7 +182,8 @@ fun TargetRoiOverlay(
             modifier = Modifier
                 .fillMaxSize()
                 .onSizeChanged { canvasSize = it }
-                .pointerInput(roi) {
+                .pointerInput(roi, dragEnabled) {
+                    if (!dragEnabled) return@pointerInput
                     var isDragging = false
                     detectDragGestures(
                         onDragStart = { start ->
