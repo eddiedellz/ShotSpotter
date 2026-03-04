@@ -81,6 +81,8 @@ private fun ShotSpotterApp(
     var statusText by remember { mutableStateOf("Camera ready") }
     var roi by remember { mutableStateOf(RoiNorm.DEFAULT) }
     var showDebugOverlay by remember { mutableStateOf(true) }
+    var lockTarget by remember { mutableStateOf(false) }
+    var cameraActions by remember { mutableStateOf<CameraActions?>(null) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -115,11 +117,14 @@ private fun ShotSpotterApp(
                 CameraPreview(
                     modifier = Modifier.fillMaxSize(),
                     lifecycleOwner = lifecycleOwner,
-                    analyzer = analyzer
+                    analyzer = analyzer,
+                    lockTarget = lockTarget,
+                    onCameraActionsAvailable = { cameraActions = it }
                 )
                 TargetRoiOverlay(
                     roi = roi,
                     onRoiChange = { roi = it },
+                    dragEnabled = !lockTarget,
                     showOverlay = showDebugOverlay,
                     modifier = Modifier.fillMaxSize()
                 )
@@ -165,6 +170,33 @@ private fun ShotSpotterApp(
                         checked = showDebugOverlay,
                         onCheckedChange = { showDebugOverlay = it }
                     )
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(onClick = { cameraActions?.stepZoom(0.2f) }) {
+                    Text("+")
+                }
+                Button(onClick = { cameraActions?.stepZoom(-0.2f) }) {
+                    Text("-")
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Lock Target")
+                    Switch(
+                        checked = lockTarget,
+                        onCheckedChange = { lockTarget = it }
+                    )
+                }
+                Button(
+                    onClick = {
+                        cameraActions?.resetZoom()
+                        roi = RoiNorm.DEFAULT
+                    }
+                ) {
+                    Text("Reset")
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -250,12 +282,6 @@ private fun ShotSpotterApp(
                 }
             }
 
-            Button(
-                onClick = { roi = RoiNorm.DEFAULT },
-                modifier = Modifier.align(Alignment.End)
-            ) {
-                Text("Reset ROI")
-            }
         }
     }
 }

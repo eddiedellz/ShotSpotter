@@ -27,11 +27,18 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
+data class CameraActions(
+    val stepZoom: (Float) -> Unit,
+    val resetZoom: () -> Unit
+)
+
 @Composable
 fun CameraPreview(
     modifier: Modifier = Modifier,
     lifecycleOwner: LifecycleOwner,
-    analyzer: Analyzer
+    analyzer: Analyzer,
+    lockTarget: Boolean,
+    onCameraActionsAvailable: (CameraActions) -> Unit
 ) {
     val context = LocalContext.current
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
@@ -55,8 +62,9 @@ fun CameraPreview(
                     camera.cameraControl.setZoomRatio(newZoomRatio)
                 }
             }
-            .pointerInput(cameraState.value, previewViewState.value) {
+            .pointerInput(cameraState.value, previewViewState.value, lockTarget) {
                 detectTapGestures { offset ->
+                    if (lockTarget) return@detectTapGestures
                     val camera = cameraState.value ?: return@detectTapGestures
                     val previewView = previewViewState.value ?: return@detectTapGestures
                     if (previewView.width == 0 || previewView.height == 0) {
@@ -91,11 +99,32 @@ fun CameraPreview(
                     analysisExecutor = analysisExecutor,
                     onCameraBound = { camera ->
                         cameraState.value = camera
+                        onCameraActionsAvailable(
+                            CameraActions(
+                                stepZoom = zoomStepLambda@{ zoomStep ->
+                                    val zoomState = camera.cameraInfo.zoomState.value
+                                        ?: return@zoomStepLambda
+                                    val newZoomRatio = (zoomState.zoomRatio + zoomStep)
+                                        .coerceIn(zoomState.minZoomRatio, zoomState.maxZoomRatio)
+                                    camera.cameraControl.setZoomRatio(newZoomRatio)
+                                },
+                                resetZoom = {
+                                    camera.cameraControl.setZoomRatio(1f)
+                                }
+                            )
+                        )
                     }
                 )
             }
         }
     )
+
+    DisposableEffect(lockTarget, cameraState.value) {
+        if (lockTarget) {
+            cameraState.value?.cameraControl?.cancelFocusAndMetering()
+        }
+        onDispose { }
+    }
 }
 
 private fun bindCamera(
