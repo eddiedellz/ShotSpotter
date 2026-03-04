@@ -9,7 +9,12 @@ data class HoleCandidate(
     val centerX: Float,
     val centerY: Float,
     val radius: Float,
-    val score: Float
+    val score: Float,
+    val confidence: Float,
+    val boxLeft: Float,
+    val boxTop: Float,
+    val boxRight: Float,
+    val boxBottom: Float
 )
 
 data class GrayFrame(
@@ -109,8 +114,23 @@ class Detector(
             val centerY = (sumY / area.toFloat()) / height.toFloat()
             val radiusPixels = sqrt(area.toDouble() / PI).toFloat()
             val normalizedRadius = radiusPixels / max(width, height).toFloat()
+            val candidateConfidence = (
+                (meanDiff / 255f) * 0.7f +
+                    (area.toFloat() / maxArea.toFloat()) * 0.3f
+                )
+                .coerceIn(0f, 1f)
 
-            candidates += HoleCandidate(centerX, centerY, normalizedRadius, score)
+            candidates += HoleCandidate(
+                centerX = centerX,
+                centerY = centerY,
+                radius = normalizedRadius,
+                score = score,
+                confidence = candidateConfidence,
+                boxLeft = minX.toFloat() / width.toFloat(),
+                boxTop = minY.toFloat() / height.toFloat(),
+                boxRight = (maxX + 1).toFloat() / width.toFloat(),
+                boxBottom = (maxY + 1).toFloat() / height.toFloat()
+            )
         }
 
         val strongest = candidates.maxByOrNull { it.score }

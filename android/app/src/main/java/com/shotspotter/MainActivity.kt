@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -34,6 +35,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.system.measureNanoTime
 
 class MainActivity : ComponentActivity() {
 
@@ -75,8 +77,10 @@ private fun ShotSpotterApp(
     var strongest by remember { mutableStateOf<HoleCandidate?>(null) }
     var confirmedDetection by remember { mutableStateOf(false) }
     var detectionConfidence by remember { mutableStateOf(0f) }
+    var frameTimeMs by remember { mutableStateOf(0f) }
     var statusText by remember { mutableStateOf("Camera ready") }
     var roi by remember { mutableStateOf(RoiNorm.DEFAULT) }
+    var showDebugOverlay by remember { mutableStateOf(true) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -116,13 +120,20 @@ private fun ShotSpotterApp(
                 TargetRoiOverlay(
                     roi = roi,
                     onRoiChange = { roi = it },
+                    showOverlay = showDebugOverlay,
                     modifier = Modifier.fillMaxSize()
                 )
-                ShotOverlay(
-                    candidates = candidates,
-                    strongest = strongest,
-                    modifier = Modifier.fillMaxSize()
-                )
+                if (showDebugOverlay) {
+                    ShotOverlay(
+                        roi = roi,
+                        candidates = candidates,
+                        strongest = strongest,
+                        confirmedDetection = confirmedDetection,
+                        detectionConfidence = detectionConfidence,
+                        frameTimeMs = frameTimeMs,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             } else {
                 Text(
                     text = "Camera permission is required.",
@@ -139,10 +150,23 @@ private fun ShotSpotterApp(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(text = statusText)
-            Text(
-                text = "Confirmed detection: $confirmedDetection | Confidence: " +
-                    String.format(Locale.US, "%.2f", detectionConfidence)
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Confirmed detection: $confirmedDetection | Confidence: " +
+                        String.format(Locale.US, "%.2f", detectionConfidence)
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Debug Overlay")
+                    Switch(
+                        checked = showDebugOverlay,
+                        onCheckedChange = { showDebugOverlay = it }
+                    )
+                }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = {
@@ -154,6 +178,7 @@ private fun ShotSpotterApp(
                             strongest = null
                             confirmedDetection = false
                             detectionConfidence = 0f
+                            frameTimeMs = 0f
                             statusText = "Baseline captured @ ${latest.timestampNanos}"
                         } else {
                             statusText = "No analyzed frame available yet"
@@ -181,28 +206,26 @@ private fun ShotSpotterApp(
                             detector.resetStability()
                             confirmedDetection = false
                             detectionConfidence = 0f
+                            frameTimeMs = 0f
                             statusText = "ROI changed after baseline; set baseline again"
                             return@Button
                         }
 
-                        val result = detector.detect(baseline = baseline, current = latest)
-
-                        val overlayCandidates = result.candidates.map { candidate ->
-                            candidate.copy(
-                                centerX = latest.roi.left + candidate.centerX * latest.roi.width,
-                                centerY = latest.roi.top + candidate.centerY * latest.roi.height,
-                                radius = candidate.radius * maxOf(latest.roi.width, latest.roi.height)
-                            )
+                        var result: DetectionResult? = null
+                        val elapsedNs = measureNanoTime {
+                            result = detector.detect(baseline = baseline, current = latest)
                         }
+                        val detection = result ?: return@Button
 
-                        candidates = overlayCandidates
-                        strongest = overlayCandidates.maxByOrNull { it.score }
-                        confirmedDetection = result.confirmedDetection
-                        detectionConfidence = result.confidence
-                        statusText = if (result.framePositive) {
-                            "Frame positive. Confirmed=${result.confirmedDetection} (${(result.confidence * 100).toInt()}%)"
+                        candidates = detection.candidates
+                        strongest = detection.strongest
+                        confirmedDetection = detection.confirmedDetection
+                        detectionConfidence = detection.confidence
+                        frameTimeMs = elapsedNs / 1_000_000f
+                        statusText = if (detection.framePositive) {
+                            "Frame positive. Confirmed=${detection.confirmedDetection} (${(detection.confidence * 100).toInt()}%)"
                         } else {
-                            "No frame hit. Confirmed=${result.confirmedDetection} (${(result.confidence * 100).toInt()}%)"
+                            "No frame hit. Confirmed=${detection.confirmedDetection} (${(detection.confidence * 100).toInt()}%)"
                         }
                     },
                     modifier = Modifier.weight(1f)
@@ -218,6 +241,7 @@ private fun ShotSpotterApp(
                         strongest = null
                         confirmedDetection = false
                         detectionConfidence = 0f
+                        frameTimeMs = 0f
                         statusText = "Cleared baseline and overlays"
                     },
                     modifier = Modifier.weight(1f)
