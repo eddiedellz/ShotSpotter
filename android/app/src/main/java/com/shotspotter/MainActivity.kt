@@ -72,6 +72,7 @@ private fun ShotSpotterApp(
     var candidates by remember { mutableStateOf<List<HoleCandidate>>(emptyList()) }
     var strongest by remember { mutableStateOf<HoleCandidate?>(null) }
     var statusText by remember { mutableStateOf("Camera ready") }
+    var roi by remember { mutableStateOf(RoiNorm.DEFAULT) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -102,6 +103,11 @@ private fun ShotSpotterApp(
                     modifier = Modifier.fillMaxSize(),
                     lifecycleOwner = lifecycleOwner,
                     analyzer = analyzer
+                )
+                TargetRoiOverlay(
+                    roi = roi,
+                    onRoiChange = { roi = it },
+                    modifier = Modifier.fillMaxSize()
                 )
                 ShotOverlay(
                     candidates = candidates,
@@ -155,7 +161,7 @@ private fun ShotSpotterApp(
                             return@Button
                         }
 
-                        val result = detector.detect(baseline = baseline, current = latest)
+                        val result = detector.detect(baseline = baseline, current = latest, roi = roi)
                         candidates = result.candidates
                         strongest = result.strongest
                         statusText = if (result.strongest != null) {
@@ -180,6 +186,13 @@ private fun ShotSpotterApp(
                 ) {
                     Text("Clear")
                 }
+            }
+
+            Button(
+                onClick = { roi = RoiNorm.DEFAULT },
+                modifier = Modifier.align(Alignment.End)
+            ) {
+                Text("Reset ROI")
             }
         }
     }
