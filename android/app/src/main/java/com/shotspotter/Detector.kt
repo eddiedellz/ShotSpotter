@@ -16,7 +16,8 @@ data class GrayFrame(
     val width: Int,
     val height: Int,
     val pixels: ByteArray,
-    val timestampNanos: Long
+    val timestampNanos: Long,
+    val roi: RoiNorm = RoiNorm.FULL
 )
 
 class Detector(
@@ -27,7 +28,7 @@ class Detector(
     private val maxAspectRatio: Float = 2.2f
 ) {
 
-    fun detect(baseline: GrayFrame, current: GrayFrame, roi: RoiNorm = RoiNorm.FULL): DetectionResult {
+    fun detect(baseline: GrayFrame, current: GrayFrame): DetectionResult {
         require(baseline.width == current.width && baseline.height == current.height) {
             "Baseline and current frames must have matching dimensions"
         }
@@ -35,23 +36,16 @@ class Detector(
         val width = baseline.width
         val height = baseline.height
         val maxArea = (width * height * maxAreaRatio).toInt().coerceAtLeast(minArea)
-        val roiBounds = roi.toPixelBounds(width, height)
 
         val diff = IntArray(width * height)
         val active = BooleanArray(width * height)
 
         for (i in diff.indices) {
-            val x = i % width
-            val y = i / width
-            val isInsideRoi =
-                x in roiBounds.left until roiBounds.rightExclusive &&
-                    y in roiBounds.top until roiBounds.bottomExclusive
-
             val d = kotlin.math.abs(
                 (current.pixels[i].toInt() and 0xFF) - (baseline.pixels[i].toInt() and 0xFF)
             )
             diff[i] = d
-            active[i] = isInsideRoi && d >= diffThreshold
+            active[i] = d >= diffThreshold
         }
 
         val visited = BooleanArray(width * height)

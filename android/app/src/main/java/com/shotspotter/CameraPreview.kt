@@ -1,6 +1,7 @@
 package com.shotspotter
 
 import android.content.Context
+import android.util.Size
 import android.view.Surface
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
@@ -115,6 +116,7 @@ private fun bindCamera(
 
         val analysis = ImageAnalysis.Builder()
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .setTargetResolution(Size(1280, 720))
             .setTargetRotation(Surface.ROTATION_0)
             .build()
             .also {

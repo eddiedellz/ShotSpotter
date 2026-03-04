@@ -23,6 +23,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -87,8 +88,13 @@ private fun ShotSpotterApp(
         }
     }
 
+    val latestRoi = rememberUpdatedState(roi)
+
     val analyzer = remember {
-        Analyzer(onFrameReady = onFrameReady)
+        Analyzer(
+            getRoi = { latestRoi.value },
+            onFrameReady = onFrameReady
+        )
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -161,9 +167,23 @@ private fun ShotSpotterApp(
                             return@Button
                         }
 
-                        val result = detector.detect(baseline = baseline, current = latest, roi = roi)
-                        candidates = result.candidates
-                        strongest = result.strongest
+                        if (baseline.width != latest.width || baseline.height != latest.height) {
+                            statusText = "ROI changed after baseline; set baseline again"
+                            return@Button
+                        }
+
+                        val result = detector.detect(baseline = baseline, current = latest)
+
+                        val overlayCandidates = result.candidates.map { candidate ->
+                            candidate.copy(
+                                centerX = latest.roi.left + candidate.centerX * latest.roi.width,
+                                centerY = latest.roi.top + candidate.centerY * latest.roi.height,
+                                radius = candidate.radius * maxOf(latest.roi.width, latest.roi.height)
+                            )
+                        }
+
+                        candidates = overlayCandidates
+                        strongest = overlayCandidates.maxByOrNull { it.score }
                         statusText = if (result.strongest != null) {
                             "Detected ${result.candidates.size} candidates, LAST highlighted"
                         } else {
