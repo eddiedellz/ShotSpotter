@@ -16,13 +16,16 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.consume
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import java.util.Locale
 import kotlin.math.roundToInt
 
 data class RoiNorm(
@@ -77,20 +80,87 @@ data class RoiPixelBounds(
 
 @Composable
 fun ShotOverlay(
+    roi: RoiNorm,
     candidates: List<HoleCandidate>,
     strongest: HoleCandidate?,
+    confirmedDetection: Boolean,
+    detectionConfidence: Float,
+    frameTimeMs: Float,
     modifier: Modifier = Modifier
 ) {
     Canvas(modifier = modifier.fillMaxSize()) {
+        val roiLeftPx = roi.left * size.width
+        val roiTopPx = roi.top * size.height
+        val roiWidthPx = roi.width * size.width
+        val roiHeightPx = roi.height * size.height
+        val indicatorColor = if (confirmedDetection) Color(0xFF34C759) else Color(0xFFFF3B30)
+
+        drawRect(
+            color = Color(0xFFFFC107),
+            topLeft = Offset(roiLeftPx, roiTopPx),
+            size = Size(roiWidthPx, roiHeightPx),
+            style = Stroke(width = 4f)
+        )
+
+        drawRect(
+            color = indicatorColor,
+            topLeft = Offset(roiLeftPx, roiTopPx),
+            size = Size(roiWidthPx, roiHeightPx),
+            style = Stroke(width = 8f)
+        )
+
         candidates.forEach { candidate ->
-            val center = Offset(candidate.centerX * size.width, candidate.centerY * size.height)
-            val radiusPx = candidate.radius * size.minDimension
+            val center = Offset(
+                x = roiLeftPx + candidate.centerX * roiWidthPx,
+                y = roiTopPx + candidate.centerY * roiHeightPx
+            )
+            val radiusPx = candidate.radius * maxOf(roiWidthPx, roiHeightPx)
             val isStrongest = strongest == candidate
+            val boxTopLeft = Offset(
+                x = roiLeftPx + candidate.boxLeft * roiWidthPx,
+                y = roiTopPx + candidate.boxTop * roiHeightPx
+            )
+            val boxSize = Size(
+                width = (candidate.boxRight - candidate.boxLeft) * roiWidthPx,
+                height = (candidate.boxBottom - candidate.boxTop) * roiHeightPx
+            )
+
+            drawRect(
+                color = if (isStrongest) Color(0xFF34C759) else Color(0xFF00E5FF),
+                topLeft = boxTopLeft,
+                size = boxSize,
+                style = Stroke(width = if (isStrongest) 5f else 3f)
+            )
+
             drawCircle(
                 color = if (isStrongest) Color(0xFFFF3B30) else Color(0xFF00E5FF),
                 radius = radiusPx,
                 center = center,
                 style = Stroke(width = if (isStrongest) 8f else 4f)
+            )
+        }
+
+        val label = buildString {
+            append("Confidence ")
+            append(String.format(Locale.US, "%.2f", detectionConfidence))
+            strongest?.let {
+                append(" | Candidate ")
+                append(String.format(Locale.US, "%.2f", it.confidence))
+            }
+            append(" | Frame ")
+            append(String.format(Locale.US, "%.1fms", frameTimeMs))
+        }
+
+        drawContext.canvas.nativeCanvas.apply {
+            drawText(
+                label,
+                24f,
+                52f,
+                android.graphics.Paint().apply {
+                    color = android.graphics.Color.WHITE
+                    textSize = 38f
+                    isFakeBoldText = true
+                }
             )
         }
     }
@@ -100,6 +170,7 @@ fun ShotOverlay(
 fun TargetRoiOverlay(
     roi: RoiNorm,
     onRoiChange: (RoiNorm) -> Unit,
+    showOverlay: Boolean,
     modifier: Modifier = Modifier
 ) {
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
@@ -134,6 +205,7 @@ fun TargetRoiOverlay(
                     )
                 }
         ) {
+            if (!showOverlay) return@Canvas
             val topLeft = Offset(roi.left * size.width, roi.top * size.height)
             val roiSize = Size(roi.width * size.width, roi.height * size.height)
             drawRect(
@@ -144,16 +216,19 @@ fun TargetRoiOverlay(
             )
         }
 
-        Text(
-            text = "Target Area",
-            color = Color(0xFFFFC107),
-            modifier = Modifier.offset {
-                IntOffset(
-                    x = (roi.left * canvasSize.width).roundToInt() + with(density) { 8.dp.roundToPx() },
-                    y = ((roi.top * canvasSize.height).roundToInt() - with(density) { 24.dp.roundToPx() })
-                        .coerceAtLeast(0)
-                )
-            }
-        )
+        if (showOverlay) {
+            Text(
+                text = "Target Area",
+                color = Color(0xFFFFC107),
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.offset {
+                    IntOffset(
+                        x = (roi.left * canvasSize.width).roundToInt() + with(density) { 8.dp.roundToPx() },
+                        y = ((roi.top * canvasSize.height).roundToInt() - with(density) { 24.dp.roundToPx() })
+                            .coerceAtLeast(0)
+                    )
+                }
+            )
+        }
     }
 }
