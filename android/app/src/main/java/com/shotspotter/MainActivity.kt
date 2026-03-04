@@ -177,10 +177,10 @@ private fun ShotSpotterApp(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Button(onClick = { cameraActions?.stepZoom(0.2f) }) {
+                Button(onClick = { cameraActions?.stepZoom?.invoke(0.2f) }) {
                     Text("+")
                 }
-                Button(onClick = { cameraActions?.stepZoom(-0.2f) }) {
+                Button(onClick = { cameraActions?.stepZoom?.invoke(-0.2f) }) {
                     Text("-")
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -192,7 +192,7 @@ private fun ShotSpotterApp(
                 }
                 Button(
                     onClick = {
-                        cameraActions?.resetZoom()
+                        cameraActions?.resetZoom?.invoke()
                         roi = RoiNorm.DEFAULT
                     }
                 ) {
