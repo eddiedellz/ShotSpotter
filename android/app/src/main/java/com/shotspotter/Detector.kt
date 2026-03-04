@@ -25,8 +25,12 @@ class Detector(
     private val minArea: Int = 8,
     private val maxAreaRatio: Float = 0.04f,
     private val minAspectRatio: Float = 0.45f,
-    private val maxAspectRatio: Float = 2.2f
+    private val maxAspectRatio: Float = 2.2f,
+    windowSize: Int = 5,
+    requiredPositives: Int = 3
 ) {
+
+    private val rollingWindow = RollingDetectionWindow(windowSize, requiredPositives)
 
     fun detect(baseline: GrayFrame, current: GrayFrame): DetectionResult {
         require(baseline.width == current.width && baseline.height == current.height) {
@@ -110,7 +114,19 @@ class Detector(
         }
 
         val strongest = candidates.maxByOrNull { it.score }
-        return DetectionResult(candidates = candidates, strongest = strongest)
+        val framePositive = strongest != null
+        val stability = rollingWindow.add(framePositive)
+        return DetectionResult(
+            candidates = candidates,
+            strongest = strongest,
+            framePositive = framePositive,
+            confirmedDetection = stability.confirmedDetection,
+            confidence = stability.confidence
+        )
+    }
+
+    fun resetStability() {
+        rollingWindow.reset()
     }
 
     private inline fun enqueueIfValid(
@@ -130,7 +146,53 @@ class Detector(
     }
 }
 
+private class RollingDetectionWindow(
+    private val size: Int,
+    private val requiredPositives: Int
+) {
+    init {
+        require(size > 0) { "Window size must be positive" }
+        require(requiredPositives in 1..size) {
+            "requiredPositives must be between 1 and window size"
+        }
+    }
+
+    private val values = ArrayDeque<Boolean>(size)
+    private var positives = 0
+
+    @Synchronized
+    fun add(isPositive: Boolean): StabilityResult {
+        if (values.size == size) {
+            val dropped = values.removeFirst()
+            if (dropped) positives--
+        }
+
+        values.addLast(isPositive)
+        if (isPositive) positives++
+
+        val confidence = positives.toFloat() / size.toFloat()
+        return StabilityResult(
+            confirmedDetection = positives >= requiredPositives,
+            confidence = confidence
+        )
+    }
+
+    @Synchronized
+    fun reset() {
+        values.clear()
+        positives = 0
+    }
+}
+
+private data class StabilityResult(
+    val confirmedDetection: Boolean,
+    val confidence: Float
+)
+
 data class DetectionResult(
     val candidates: List<HoleCandidate>,
-    val strongest: HoleCandidate?
+    val strongest: HoleCandidate?,
+    val framePositive: Boolean,
+    val confirmedDetection: Boolean,
+    val confidence: Float
 )

@@ -32,6 +32,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicReference
 
 class MainActivity : ComponentActivity() {
@@ -72,6 +73,8 @@ private fun ShotSpotterApp(
     var baselineFrame by remember { mutableStateOf<GrayFrame?>(null) }
     var candidates by remember { mutableStateOf<List<HoleCandidate>>(emptyList()) }
     var strongest by remember { mutableStateOf<HoleCandidate?>(null) }
+    var confirmedDetection by remember { mutableStateOf(false) }
+    var detectionConfidence by remember { mutableStateOf(0f) }
     var statusText by remember { mutableStateOf("Camera ready") }
     var roi by remember { mutableStateOf(RoiNorm.DEFAULT) }
 
@@ -136,14 +139,21 @@ private fun ShotSpotterApp(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(text = statusText)
+            Text(
+                text = "Confirmed detection: $confirmedDetection | Confidence: " +
+                    String.format(Locale.US, "%.2f", detectionConfidence)
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = {
                         val latest = getLatestFrame()
                         if (latest != null) {
                             baselineFrame = latest.copy(pixels = latest.pixels.copyOf())
+                            detector.resetStability()
                             candidates = emptyList()
                             strongest = null
+                            confirmedDetection = false
+                            detectionConfidence = 0f
                             statusText = "Baseline captured @ ${latest.timestampNanos}"
                         } else {
                             statusText = "No analyzed frame available yet"
@@ -168,6 +178,9 @@ private fun ShotSpotterApp(
                         }
 
                         if (baseline.width != latest.width || baseline.height != latest.height) {
+                            detector.resetStability()
+                            confirmedDetection = false
+                            detectionConfidence = 0f
                             statusText = "ROI changed after baseline; set baseline again"
                             return@Button
                         }
@@ -184,10 +197,12 @@ private fun ShotSpotterApp(
 
                         candidates = overlayCandidates
                         strongest = overlayCandidates.maxByOrNull { it.score }
-                        statusText = if (result.strongest != null) {
-                            "Detected ${result.candidates.size} candidates, LAST highlighted"
+                        confirmedDetection = result.confirmedDetection
+                        detectionConfidence = result.confidence
+                        statusText = if (result.framePositive) {
+                            "Frame positive. Confirmed=${result.confirmedDetection} (${(result.confidence * 100).toInt()}%)"
                         } else {
-                            "No new shot detected"
+                            "No frame hit. Confirmed=${result.confirmedDetection} (${(result.confidence * 100).toInt()}%)"
                         }
                     },
                     modifier = Modifier.weight(1f)
@@ -198,8 +213,11 @@ private fun ShotSpotterApp(
                 Button(
                     onClick = {
                         baselineFrame = null
+                        detector.resetStability()
                         candidates = emptyList()
                         strongest = null
+                        confirmedDetection = false
+                        detectionConfidence = 0f
                         statusText = "Cleared baseline and overlays"
                     },
                     modifier = Modifier.weight(1f)
