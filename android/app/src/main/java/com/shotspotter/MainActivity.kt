@@ -2,7 +2,9 @@ package com.shotspotter
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.os.Bundle
+import androidx.compose.foundation.Image
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -15,7 +17,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.Slider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -28,6 +33,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -84,6 +90,11 @@ private fun ShotSpotterApp(
     var lockTarget by remember { mutableStateOf(false) }
     var torchEnabled by remember { mutableStateOf(false) }
     var cameraActions by remember { mutableStateOf<CameraActions?>(null) }
+    var detectorSettingsExpanded by remember { mutableStateOf(false) }
+    var showDebugMask by remember { mutableStateOf(false) }
+    var debugMask by remember { mutableStateOf<DebugMask?>(null) }
+
+    var detectorTuning by remember { mutableStateOf(detector.getTuning()) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -129,6 +140,7 @@ private fun ShotSpotterApp(
                 confirmedDetection = detection.confirmedDetection
                 detectionConfidence = detection.confidence
                 frameTimeMs = elapsedNs / 1_000_000f
+                debugMask = detection.debugMask
                 statusText =
                     "Baseline set • ${detection.candidates.size} candidates • Confirmed=${detection.confirmedDetection}"
             }
@@ -308,6 +320,135 @@ private fun ShotSpotterApp(
                 }
             }
 
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Detector Settings")
+                        Switch(
+                            checked = detectorSettingsExpanded,
+                            onCheckedChange = { detectorSettingsExpanded = it }
+                        )
+                    }
+
+                    if (detectorSettingsExpanded) {
+                        LabeledSlider(
+                            label = "minArea",
+                            value = detectorTuning.minArea.toFloat(),
+                            valueRange = 1f..200f,
+                            steps = 198,
+                            onValueChange = { value ->
+                                val updated = detectorTuning.copy(minArea = value.toInt().coerceAtMost(detectorTuning.maxArea))
+                                detectorTuning = updated
+                                detector.updateTuning(updated)
+                            }
+                        )
+                        LabeledSlider(
+                            label = "maxArea",
+                            value = detectorTuning.maxArea.toFloat(),
+                            valueRange = 20f..2000f,
+                            steps = 1979,
+                            onValueChange = { value ->
+                                val updated = detectorTuning.copy(maxArea = value.toInt().coerceAtLeast(detectorTuning.minArea))
+                                detectorTuning = updated
+                                detector.updateTuning(updated)
+                            }
+                        )
+                        LabeledSlider(
+                            label = "circularityMin",
+                            value = detectorTuning.circularityMin,
+                            valueRange = 0.4f..0.95f,
+                            steps = 54,
+                            onValueChange = { value ->
+                                val updated = detectorTuning.copy(circularityMin = value)
+                                detectorTuning = updated
+                                detector.updateTuning(updated)
+                            }
+                        )
+
+                        if (baselineFrame != null) {
+                            LabeledSlider(
+                                label = "diffThreshold",
+                                value = detectorTuning.diffThreshold.toFloat(),
+                                valueRange = 5f..60f,
+                                steps = 54,
+                                onValueChange = { value ->
+                                    val updated = detectorTuning.copy(diffThreshold = value.toInt())
+                                    detectorTuning = updated
+                                    detector.updateTuning(updated)
+                                }
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Show debug mask")
+                            Switch(
+                                checked = showDebugMask,
+                                onCheckedChange = { showDebugMask = it }
+                            )
+                        }
+
+                        if (showDebugMask && debugMask != null) {
+                            MaskPreview(
+                                mask = debugMask!!,
+                                modifier = Modifier
+                                    .size(120.dp)
+                                    .background(Color.DarkGray)
+                            )
+                        }
+                    }
+                }
+            }
+
         }
     }
+}
+
+@Composable
+private fun LabeledSlider(
+    label: String,
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    steps: Int,
+    onValueChange: (Float) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text("$label: ${String.format(Locale.US, "%.2f", value)}")
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = valueRange,
+            steps = steps
+        )
+    }
+}
+
+@Composable
+private fun MaskPreview(mask: DebugMask, modifier: Modifier = Modifier) {
+    val bitmap = remember(mask) {
+        val colors = IntArray(mask.width * mask.height) { idx ->
+            val v = mask.pixels[idx].toInt() and 0xFF
+            val alpha = 0xFF shl 24
+            alpha or (v shl 16) or (v shl 8) or v
+        }
+        Bitmap.createBitmap(colors, mask.width, mask.height, Bitmap.Config.ARGB_8888)
+    }
+
+    Image(
+        bitmap = bitmap.asImageBitmap(),
+        contentDescription = "Threshold debug mask",
+        modifier = modifier
+    )
 }
