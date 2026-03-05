@@ -72,7 +72,7 @@ private fun ShotSpotterApp(
         )
     }
 
-    var baselineFrame by remember { mutableStateOf<GrayFrame?>(null) }
+    var baselineFrame by remember { mutableStateOf<PreparedFrame?>(null) }
     var candidates by remember { mutableStateOf<List<HoleCandidate>>(emptyList()) }
     var strongest by remember { mutableStateOf<HoleCandidate?>(null) }
     var confirmedDetection by remember { mutableStateOf(false) }
@@ -102,7 +102,35 @@ private fun ShotSpotterApp(
     val analyzer = remember {
         Analyzer(
             getRoi = { latestRoi.value },
-            onFrameReady = onFrameReady
+            onFrameReady = frameLoop@{ frame ->
+                onFrameReady(frame)
+
+                val baseline = baselineFrame ?: return@frameLoop
+                val currentPrepared = detector.prepareFrame(frame)
+                if (baseline.width != currentPrepared.width || baseline.height != currentPrepared.height) {
+                    detector.resetStability()
+                    candidates = emptyList()
+                    strongest = null
+                    confirmedDetection = false
+                    detectionConfidence = 0f
+                    frameTimeMs = 0f
+                    statusText = "ROI changed after baseline; set baseline again"
+                    return@frameLoop
+                }
+
+                var result: DetectionResult? = null
+                val elapsedNs = measureNanoTime {
+                    result = detector.detect(baseline = baseline, current = currentPrepared)
+                }
+                val detection = result ?: return@frameLoop
+                candidates = detection.candidates
+                strongest = detection.strongest
+                confirmedDetection = detection.confirmedDetection
+                detectionConfidence = detection.confidence
+                frameTimeMs = elapsedNs / 1_000_000f
+                statusText =
+                    "Baseline set • ${detection.candidates.size} candidates • Confirmed=${detection.confirmedDetection}"
+            }
         )
     }
 
@@ -204,14 +232,16 @@ private fun ShotSpotterApp(
                     onClick = {
                         val latest = getLatestFrame()
                         if (latest != null) {
-                            baselineFrame = latest.copy(pixels = latest.pixels.copyOf())
+                            baselineFrame = detector.prepareFrame(
+                                latest.copy(pixels = latest.pixels.copyOf())
+                            )
                             detector.resetStability()
                             candidates = emptyList()
                             strongest = null
                             confirmedDetection = false
                             detectionConfidence = 0f
                             frameTimeMs = 0f
-                            statusText = "Baseline captured @ ${latest.timestampNanos}"
+                            statusText = "Baseline set"
                         } else {
                             statusText = "No analyzed frame available yet"
                         }
@@ -234,31 +264,14 @@ private fun ShotSpotterApp(
                             return@Button
                         }
 
-                        if (baseline.width != latest.width || baseline.height != latest.height) {
-                            detector.resetStability()
-                            confirmedDetection = false
-                            detectionConfidence = 0f
-                            frameTimeMs = 0f
-                            statusText = "ROI changed after baseline; set baseline again"
-                            return@Button
-                        }
-
-                        var result: DetectionResult? = null
-                        val elapsedNs = measureNanoTime {
-                            result = detector.detect(baseline = baseline, current = latest)
-                        }
-                        val detection = result ?: return@Button
-
-                        candidates = detection.candidates
-                        strongest = detection.strongest
-                        confirmedDetection = detection.confirmedDetection
-                        detectionConfidence = detection.confidence
-                        frameTimeMs = elapsedNs / 1_000_000f
-                        statusText = if (detection.framePositive) {
-                            "Frame positive. Confirmed=${detection.confirmedDetection} (${(detection.confidence * 100).toInt()}%)"
-                        } else {
-                            "No frame hit. Confirmed=${detection.confirmedDetection} (${(detection.confidence * 100).toInt()}%)"
-                        }
+                        baselineFrame = detector.prepareFrame(latest.copy(pixels = latest.pixels.copyOf()))
+                        detector.resetStability()
+                        candidates = emptyList()
+                        strongest = null
+                        confirmedDetection = false
+                        detectionConfidence = 0f
+                        frameTimeMs = 0f
+                        statusText = "Advanced baseline to next shot"
                     },
                     modifier = Modifier.weight(1f)
                 ) {
