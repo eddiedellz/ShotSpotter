@@ -12,15 +12,18 @@ import java.io.ByteArrayOutputStream
 fun ImageProxy.toUprightBitmap(): Bitmap {
     val nv21 = yuv420888ToNv21(this)
     val yuvImage = YuvImage(nv21, ImageFormat.NV21, width, height, null)
-    val out = ByteArrayOutputStream()
-    yuvImage.compressToJpeg(Rect(0, 0, width, height), 90, out)
-    val jpegBytes = out.toByteArray()
+    val jpegBytes = ByteArrayOutputStream().use { out ->
+        yuvImage.compressToJpeg(cropRect, 90, out)
+        out.toByteArray()
+    }
     val rawBitmap = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
 
-    val rotation = imageInfo.rotationDegrees
-    if (rotation == 0) return rawBitmap
+    val matrix = Matrix().apply {
+        if (imageInfo.rotationDegrees != 0) {
+            postRotate(imageInfo.rotationDegrees.toFloat())
+        }
+    }
 
-    val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
     return Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
 }
 

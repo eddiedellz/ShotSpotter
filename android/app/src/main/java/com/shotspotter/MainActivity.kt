@@ -82,6 +82,7 @@ private fun ShotSpotterApp(
     var roi by remember { mutableStateOf(RoiNorm.DEFAULT) }
     var showDebugOverlay by remember { mutableStateOf(true) }
     var lockTarget by remember { mutableStateOf(false) }
+    var torchEnabled by remember { mutableStateOf(false) }
     var cameraActions by remember { mutableStateOf<CameraActions?>(null) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -218,9 +219,21 @@ private fun ShotSpotterApp(
                         onCheckedChange = { lockTarget = it }
                     )
                 }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Torch")
+                    Switch(
+                        checked = torchEnabled,
+                        onCheckedChange = {
+                            torchEnabled = it
+                            cameraActions?.setTorchEnabled?.invoke(it)
+                        }
+                    )
+                }
                 Button(
                     onClick = {
                         cameraActions?.resetZoom?.invoke()
+                        torchEnabled = false
+                        cameraActions?.setTorchEnabled?.invoke(false)
                         roi = RoiNorm.DEFAULT
                     }
                 ) {
