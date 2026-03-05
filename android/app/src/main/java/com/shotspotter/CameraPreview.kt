@@ -1,6 +1,10 @@
 package com.shotspotter
 
 import android.content.Context
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
+import android.hardware.camera2.params.StreamConfigurationMap
+import android.util.Log
 import android.util.Size
 import android.view.Surface
 import androidx.camera.core.Camera
@@ -29,7 +33,8 @@ import java.util.concurrent.TimeUnit
 
 data class CameraActions(
     val stepZoom: (Float) -> Unit,
-    val resetZoom: () -> Unit
+    val resetZoom: () -> Unit,
+    val setTorchEnabled: (Boolean) -> Unit
 )
 
 @Composable
@@ -110,6 +115,9 @@ fun CameraPreview(
                                 },
                                 resetZoom = {
                                     camera.cameraControl.setZoomRatio(1f)
+                                },
+                                setTorchEnabled = { enabled ->
+                                    camera.cameraControl.enableTorch(enabled)
                                 }
                             )
                         )
@@ -145,8 +153,8 @@ private fun bindCamera(
 
         val analysis = ImageAnalysis.Builder()
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-            .setTargetResolution(Size(1280, 720))
-            .setTargetRotation(Surface.ROTATION_0)
+            .setTargetResolution(selectImageAnalysisResolution(context))
+            .setTargetRotation(previewView.display?.rotation ?: Surface.ROTATION_0)
             .build()
             .also {
                 it.setAnalyzer(analysisExecutor, analyzer)
@@ -163,4 +171,42 @@ private fun bindCamera(
         )
         onCameraBound(camera)
     }, ContextCompat.getMainExecutor(context))
+}
+
+private fun selectImageAnalysisResolution(context: Context): Size {
+    val fallback = Size(1280, 720)
+    val preferred = Size(1920, 1080)
+    return runCatching {
+        val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val cameraId = cameraManager.cameraIdList.firstOrNull { id ->
+            val characteristics = cameraManager.getCameraCharacteristics(id)
+            val lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING)
+            lensFacing == CameraCharacteristics.LENS_FACING_BACK
+        } ?: return fallback
+
+        val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+        val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+            ?: return fallback
+
+        pickAnalysisResolution(map, preferred, fallback)
+    }.getOrElse {
+        Log.w("CameraPreview", "Failed to query analysis resolution; using fallback", it)
+        fallback
+    }
+}
+
+private fun pickAnalysisResolution(
+    map: StreamConfigurationMap,
+    preferred: Size,
+    fallback: Size
+): Size {
+    val supported = map.getOutputSizes(android.graphics.ImageFormat.YUV_420_888)?.toList().orEmpty()
+    if (supported.contains(preferred)) return preferred
+    if (supported.contains(fallback)) return fallback
+
+    return supported
+        .filter { it.width * 9 == it.height * 16 }
+        .filter { it.width <= preferred.width && it.height <= preferred.height }
+        .maxByOrNull { it.width * it.height }
+        ?: fallback
 }
