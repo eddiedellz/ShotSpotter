@@ -26,35 +26,58 @@ data class GrayFrame(
 )
 
 class Detector(
-    private val diffThreshold: Int = 28,
-    private val minArea: Int = 8,
-    private val maxAreaRatio: Float = 0.04f,
-    private val minAspectRatio: Float = 0.45f,
-    private val maxAspectRatio: Float = 2.2f,
+    private val diffThreshold: Int = 20,
+    private val darkThreshold: Int = 80,
+    private val minArea: Int = 6,
+    private val maxArea: Int = 600,
+    private val minCircularity: Float = 0.35f,
+    private val downsampleFactor: Int = 2,
     windowSize: Int = 5,
     requiredPositives: Int = 3
 ) {
 
     private val rollingWindow = RollingDetectionWindow(windowSize, requiredPositives)
 
-    fun detect(baseline: GrayFrame, current: GrayFrame): DetectionResult {
+    fun prepareFrame(frame: GrayFrame): PreparedFrame {
+        val factor = downsampleFactor.coerceAtLeast(1)
+        val downsampled = if (factor == 1) {
+            frame.pixels.copyOf()
+        } else {
+            downsample(frame, factor)
+        }
+        return PreparedFrame(
+            width = frame.width / factor,
+            height = frame.height / factor,
+            pixels = downsampled,
+            timestampNanos = frame.timestampNanos,
+            roi = frame.roi
+        )
+    }
+
+    fun detect(baseline: PreparedFrame, current: GrayFrame): DetectionResult {
+        val currentPrepared = prepareFrame(current)
+        return detect(baseline, currentPrepared)
+    }
+
+    fun detect(baseline: PreparedFrame, current: PreparedFrame): DetectionResult {
         require(baseline.width == current.width && baseline.height == current.height) {
             "Baseline and current frames must have matching dimensions"
         }
 
         val width = baseline.width
         val height = baseline.height
-        val maxArea = (width * height * maxAreaRatio).toInt().coerceAtLeast(minArea)
 
-        val diff = IntArray(width * height)
+        val diff = ByteArray(width * height)
         val active = BooleanArray(width * height)
+        val frameDarkThreshold = resolveDarkThreshold(current.pixels)
 
-        for (i in diff.indices) {
+        for (i in baseline.pixels.indices) {
             val d = kotlin.math.abs(
                 (current.pixels[i].toInt() and 0xFF) - (baseline.pixels[i].toInt() and 0xFF)
             )
-            diff[i] = d
-            active[i] = d >= diffThreshold
+            val isDark = (current.pixels[i].toInt() and 0xFF) <= frameDarkThreshold
+            diff[i] = d.toByte()
+            active[i] = d >= diffThreshold && isDark
         }
 
         val visited = BooleanArray(width * height)
@@ -73,6 +96,7 @@ class Detector(
             var sumDiff = 0f
             var sumX = 0f
             var sumY = 0f
+            var perimeter = 0
             var minX = Int.MAX_VALUE
             var minY = Int.MAX_VALUE
             var maxX = Int.MIN_VALUE
@@ -84,10 +108,12 @@ class Detector(
                 val y = idx / width
 
                 area++
-                val d = diff[idx].toFloat()
+                val d = (diff[idx].toInt() and 0xFF).toFloat()
                 sumDiff += d
                 sumX += x
                 sumY += y
+
+                perimeter += boundaryEdges(x, y, width, height, active)
 
                 minX = min(minX, x)
                 minY = min(minY, y)
@@ -102,10 +128,9 @@ class Detector(
 
             if (area !in minArea..maxArea) continue
 
-            val blobWidth = (maxX - minX + 1).toFloat()
-            val blobHeight = (maxY - minY + 1).toFloat()
-            val aspect = blobWidth / blobHeight
-            if (aspect < minAspectRatio || aspect > maxAspectRatio) continue
+            if (perimeter <= 0) continue
+            val circularity = ((4f * PI.toFloat() * area.toFloat()) / (perimeter * perimeter).toFloat())
+            if (circularity < minCircularity) continue
 
             val meanDiff = sumDiff / area.toFloat()
             val score = meanDiff * sqrt(area.toFloat())
@@ -149,6 +174,42 @@ class Detector(
         rollingWindow.reset()
     }
 
+    private fun resolveDarkThreshold(currentPixels: ByteArray): Int {
+        if (darkThreshold >= 0) {
+            return darkThreshold
+        }
+
+        var sum = 0L
+        for (px in currentPixels) {
+            sum += (px.toInt() and 0xFF).toLong()
+        }
+        val mean = sum.toFloat() / currentPixels.size.toFloat()
+        return (mean * 0.6f).toInt().coerceIn(25, 120)
+    }
+
+    private fun boundaryEdges(x: Int, y: Int, width: Int, height: Int, active: BooleanArray): Int {
+        var edges = 0
+        if (x == 0 || !active[y * width + (x - 1)]) edges++
+        if (x == width - 1 || !active[y * width + (x + 1)]) edges++
+        if (y == 0 || !active[(y - 1) * width + x]) edges++
+        if (y == height - 1 || !active[(y + 1) * width + x]) edges++
+        return edges
+    }
+
+    private fun downsample(frame: GrayFrame, factor: Int): ByteArray {
+        val outWidth = frame.width / factor
+        val outHeight = frame.height / factor
+        val out = ByteArray(outWidth * outHeight)
+        for (y in 0 until outHeight) {
+            for (x in 0 until outWidth) {
+                val srcX = x * factor
+                val srcY = y * factor
+                out[y * outWidth + x] = frame.pixels[srcY * frame.width + srcX]
+            }
+        }
+        return out
+    }
+
     private inline fun enqueueIfValid(
         x: Int,
         y: Int,
@@ -165,6 +226,14 @@ class Detector(
         enqueue(idx)
     }
 }
+
+data class PreparedFrame(
+    val width: Int,
+    val height: Int,
+    val pixels: ByteArray,
+    val timestampNanos: Long,
+    val roi: RoiNorm
+)
 
 private class RollingDetectionWindow(
     private val size: Int,
