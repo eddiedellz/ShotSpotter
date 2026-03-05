@@ -26,17 +26,31 @@ data class GrayFrame(
 )
 
 class Detector(
-    private val diffThreshold: Int = 20,
+    diffThreshold: Int = 20,
     private val darkThreshold: Int = 80,
-    private val minArea: Int = 6,
-    private val maxArea: Int = 600,
-    private val minCircularity: Float = 0.35f,
+    minArea: Int = 6,
+    maxArea: Int = 600,
+    minCircularity: Float = 0.35f,
     private val downsampleFactor: Int = 2,
     windowSize: Int = 5,
     requiredPositives: Int = 3
 ) {
 
+    @Volatile
+    private var tuning = DetectorTuning(
+        minArea = minArea,
+        maxArea = maxArea,
+        circularityMin = minCircularity,
+        diffThreshold = diffThreshold
+    )
+
     private val rollingWindow = RollingDetectionWindow(windowSize, requiredPositives)
+
+    fun updateTuning(newTuning: DetectorTuning) {
+        tuning = newTuning
+    }
+
+    fun getTuning(): DetectorTuning = tuning
 
     fun prepareFrame(frame: GrayFrame): PreparedFrame {
         val factor = downsampleFactor.coerceAtLeast(1)
@@ -71,13 +85,15 @@ class Detector(
         val active = BooleanArray(width * height)
         val frameDarkThreshold = resolveDarkThreshold(current.pixels)
 
+        val currentTuning = tuning
+
         for (i in baseline.pixels.indices) {
             val d = kotlin.math.abs(
                 (current.pixels[i].toInt() and 0xFF) - (baseline.pixels[i].toInt() and 0xFF)
             )
             val isDark = (current.pixels[i].toInt() and 0xFF) <= frameDarkThreshold
             diff[i] = d.toByte()
-            active[i] = d >= diffThreshold && isDark
+            active[i] = d >= currentTuning.diffThreshold && isDark
         }
 
         val visited = BooleanArray(width * height)
@@ -126,11 +142,11 @@ class Detector(
                 enqueueIfValid(x, y + 1, width, height, active, visited) { idx -> queue[tail++] = idx }
             }
 
-            if (area !in minArea..maxArea) continue
+            if (area !in currentTuning.minArea..currentTuning.maxArea) continue
 
             if (perimeter <= 0) continue
             val circularity = ((4f * PI.toFloat() * area.toFloat()) / (perimeter * perimeter).toFloat())
-            if (circularity < minCircularity) continue
+            if (circularity < currentTuning.circularityMin) continue
 
             val meanDiff = sumDiff / area.toFloat()
             val score = meanDiff * sqrt(area.toFloat())
@@ -140,8 +156,8 @@ class Detector(
             val radiusPixels = sqrt(area.toDouble() / PI).toFloat()
             val normalizedRadius = radiusPixels / max(width, height).toFloat()
             val candidateConfidence = (
-                (meanDiff / 255f) * 0.7f +
-                    (area.toFloat() / maxArea.toFloat()) * 0.3f
+                    (meanDiff / 255f) * 0.7f +
+                    (area.toFloat() / currentTuning.maxArea.toFloat()) * 0.3f
                 )
                 .coerceIn(0f, 1f)
 
@@ -166,7 +182,12 @@ class Detector(
             strongest = strongest,
             framePositive = framePositive,
             confirmedDetection = stability.confirmedDetection,
-            confidence = stability.confidence
+            confidence = stability.confidence,
+            debugMask = DebugMask(
+                width = width,
+                height = height,
+                pixels = ByteArray(active.size) { idx -> if (active[idx]) 0xFF.toByte() else 0x00.toByte() }
+            )
         )
     }
 
@@ -283,5 +304,19 @@ data class DetectionResult(
     val strongest: HoleCandidate?,
     val framePositive: Boolean,
     val confirmedDetection: Boolean,
-    val confidence: Float
+    val confidence: Float,
+    val debugMask: DebugMask? = null
+)
+
+data class DetectorTuning(
+    val minArea: Int,
+    val maxArea: Int,
+    val circularityMin: Float,
+    val diffThreshold: Int
+)
+
+data class DebugMask(
+    val width: Int,
+    val height: Int,
+    val pixels: ByteArray
 )
